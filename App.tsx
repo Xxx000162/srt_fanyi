@@ -1,8 +1,9 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Settings, X, Save, ShieldCheck } from 'lucide-react';
 import { SubtitleAlignmentService } from './services/geminiService';
 import { parseSrt } from './utils/srtParser';
-import { ProcessingResult } from './types';
+import { ProcessingResult, ApiSettings } from './types';
 
 // Declare global mammoth for docx parsing
 declare const mammoth: any;
@@ -18,6 +19,16 @@ const App: React.FC = () => {
   
   const [isDraggingSrt, setIsDraggingSrt] = useState(false);
   const [isDraggingDoc, setIsDraggingDoc] = useState(false);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiSettings, setApiSettings] = useState<ApiSettings>(() => {
+    const saved = localStorage.getItem('subtitle_api_settings');
+    return saved ? JSON.parse(saved) : { baseUrl: '', modelName: '', apiKey: '' };
+  });
+
+  useEffect(() => {
+    localStorage.setItem('subtitle_api_settings', JSON.stringify(apiSettings));
+  }, [apiSettings]);
 
   const processFile = useCallback(async (file: File, type: 'srt' | 'docx') => {
     const reader = new FileReader();
@@ -103,7 +114,8 @@ const App: React.FC = () => {
       const alignmentResult = await service.alignSubtitles(
         srtBlocks, 
         processedDocInput,
-        (progressText) => setStreamingLog(progressText)
+        (progressText) => setStreamingLog(progressText),
+        apiSettings.baseUrl && apiSettings.apiKey ? apiSettings : undefined
       );
       
       setResult(alignmentResult);
@@ -136,11 +148,93 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 md:p-8 space-y-8 max-w-6xl mx-auto">
-      <header className="text-center space-y-2">
-        <h1 className="text-3xl font-bold text-blue-800">专业字幕翻译处理助手</h1>
-        <p className="text-gray-600">根据 DOCX 对照内容为 SRT 文件精准添加中文翻译</p>
+    <div className="min-h-screen flex flex-col items-center p-4 md:p-8 space-y-8 max-w-6xl mx-auto relative">
+      <header className="w-full flex justify-between items-center mb-4">
+        <div className="flex-1"></div>
+        <div className="text-center flex-1">
+          <h1 className="text-3xl font-bold text-blue-800">专业字幕翻译处理助手</h1>
+          <p className="text-gray-600">根据 DOCX 对照内容为 SRT 文件精准添加中文翻译</p>
+        </div>
+        <div className="flex-1 flex justify-end">
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
+            title="API 设置"
+          >
+            <Settings size={24} />
+          </button>
+        </div>
       </header>
+
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/50">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <Settings size={20} className="text-blue-600" />
+                API 设置 (OpenAI 兼容)
+              </h2>
+              <button 
+                onClick={() => setShowSettings(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700 block">API 基地址 (Base URL)</label>
+                <input 
+                  type="text" 
+                  placeholder="https://api.openai.com/v1"
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                  value={apiSettings.baseUrl}
+                  onChange={(e) => setApiSettings({...apiSettings, baseUrl: e.target.value})}
+                />
+                <p className="text-[10px] text-gray-400">留空则默认使用内置 Gemini API</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700 block">模型名称 (Model Name)</label>
+                <input 
+                  type="text" 
+                  placeholder="gpt-3.5-turbo"
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                  value={apiSettings.modelName}
+                  onChange={(e) => setApiSettings({...apiSettings, modelName: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700 block">API Key</label>
+                <div className="relative">
+                  <input 
+                    type="password" 
+                    placeholder="sk-..."
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm pr-10"
+                    value={apiSettings.apiKey}
+                    onChange={(e) => setApiSettings({...apiSettings, apiKey: e.target.value})}
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300">
+                    <ShieldCheck size={16} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button 
+                  onClick={() => setShowSettings(false)}
+                  className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-all shadow-md hover:shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
+                >
+                  <Save size={18} />
+                  保存设置
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!result ? (
         <div className="w-full space-y-8">

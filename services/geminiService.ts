@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { SrtBlock, ProcessingResult } from "../types";
+import { SrtBlock, ProcessingResult, ApiSettings } from "../types";
 
 export class SubtitleAlignmentService {
   private ai: GoogleGenAI;
@@ -12,7 +12,8 @@ export class SubtitleAlignmentService {
   async alignSubtitles(
     srtBlocks: SrtBlock[], 
     referenceText: string,
-    onProgress: (chunkText: string) => void
+    onProgress: (chunkText: string) => void,
+    settings?: ApiSettings
   ): Promise<ProcessingResult> {
     const srtData = srtBlocks.map(b => ({ id: b.id, english: b.content }));
     
@@ -41,49 +42,97 @@ export class SubtitleAlignmentService {
     8. RETURN JSON: Return a JSON object with 'updatedSegments' (array of {id, content}) and 'mismatches' (array of strings in Chinese).
     `;
 
-    try {
-      const responseStream = await this.ai.models.generateContentStream({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: {
-          thinkingConfig: { thinkingBudget: 4000 },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              updatedSegments: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.STRING },
-                    content: { type: Type.STRING, description: "Chinese translation + newline + original English. Deduplicate numeric lines." }
-                  },
-                  required: ["id", "content"]
+    let fullText = '';
+
+    if (settings && settings.baseUrl && settings.apiKey) {
+      // Use OpenAI-compatible API
+      try {
+        const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${settings.apiKey}`
+          },
+          body: JSON.stringify({
+            model: settings.modelName || 'gpt-3.5-turbo',
+            messages: [
+              { role: 'system', content: 'You are a professional subtitle translation assistant.' },
+              { role: 'user', content: prompt }
+            ],
+            response_format: { type: 'json_object' }
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`API Error: ${response.status} ${JSON.stringify(errorData)}`);
+        }
+
+        const data = await response.json();
+        fullText = data.choices[0].message.content;
+        
+        // Handle case where model wraps JSON in markdown code blocks
+        if (fullText.includes('```json')) {
+          fullText = fullText.split('```json')[1].split('```')[0].trim();
+        } else if (fullText.includes('```')) {
+          fullText = fullText.split('```')[1].split('```')[0].trim();
+        }
+
+        onProgress(fullText); // Fake streaming for progress if not real streaming
+      } catch (error) {
+        console.error("OpenAI API Error:", error);
+        throw error;
+      }
+    } else {
+      // Use Gemini API
+      try {
+        const responseStream = await this.ai.models.generateContentStream({
+          model: 'gemini-3-flash-preview',
+          contents: prompt,
+          config: {
+            thinkingConfig: { thinkingBudget: 4000 },
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                updatedSegments: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      content: { type: Type.STRING, description: "Chinese translation + newline + original English. Deduplicate numeric lines." }
+                    },
+                    required: ["id", "content"]
+                  }
+                },
+                mismatches: {
+                  type: Type.ARRAY,
+                  items: { 
+                    type: Type.STRING,
+                    description: "用中文说明无法匹配的原因。"
+                  }
                 }
               },
-              mismatches: {
-                type: Type.ARRAY,
-                items: { 
-                  type: Type.STRING,
-                  description: "用中文说明无法匹配的原因。"
-                }
-              }
-            },
-            required: ["updatedSegments", "mismatches"]
+              required: ["updatedSegments", "mismatches"]
+            }
+          }
+        });
+
+        for await (const chunk of responseStream) {
+          const text = chunk.text;
+          if (text) {
+            fullText += text;
+            onProgress(fullText);
           }
         }
-      });
-
-      let fullText = '';
-      for await (const chunk of responseStream) {
-        const text = chunk.text;
-        if (text) {
-          fullText += text;
-          onProgress(fullText);
-        }
+      } catch (error) {
+        console.error("Gemini API Error:", error);
+        throw error;
       }
+    }
 
+    try {
       const result = JSON.parse(fullText || '{}');
       
       const mappedBlocks = srtBlocks.map(block => {

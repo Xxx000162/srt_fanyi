@@ -1,4 +1,10 @@
 
+export interface ApiSettings {
+  baseUrl: string;
+  modelName: string;
+  apiKey: string;
+}
+
 export interface SrtBlock {
   id: string;
   timestamp: string;
